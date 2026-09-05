@@ -12,6 +12,11 @@ pub fn placement_config_path() -> PathBuf {
     dirs_next().join("placement.toml")
 }
 
+/// Default path for the fleet metadata table (expected-down annotations, known nodes)
+pub fn fleet_config_path() -> PathBuf {
+    dirs_next().join("fleet.toml")
+}
+
 fn dirs_next() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     PathBuf::from(home).join(".config").join("wintermute")
@@ -114,6 +119,281 @@ impl Placement {
             None => false,
         }
     }
+
+    /// Every placement entry as an `Assignment`, sorted by job name for stable output.
+    pub fn assignments(&self, local_node: &str, fleet: &Fleet) -> Vec<Assignment> {
+        let mut list: Vec<Assignment> = self
+            .table
+            .iter()
+            .map(|(job, node)| Assignment {
+                job: job.clone(),
+                node: node.clone(),
+                local: node.eq_ignore_ascii_case(local_node),
+                may_be_off: fleet.expected_down(node),
+                unknown_node: !fleet.is_empty() && !fleet.knows(node),
+            })
+            .collect();
+        list.sort_by(|a, b| a.job.cmp(&b.job));
+        list
+    }
+}
+
+/// Resolution of `wm-node should-run <daemon>` before it becomes an exit code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShouldRun {
+    /// The daemon is assigned to this node — exit 0.
+    Yes,
+    /// The daemon is assigned elsewhere (or not assigned at all) — exit 1.
+    No,
+    /// placement.toml does not exist — permissive: exit 0, warn on stderr.
+    MissingPlacement,
+}
+
+/// Decide should-run status for `daemon` on `node_name`, given an explicit placement.toml
+/// path. A missing file is permissive (P1): a half-joined node must not silently kill its
+/// jobs. Kept separate from `cmd_should_run` in main.rs so it is testable without touching
+/// `$HOME`.
+pub fn should_run_status(
+    placement_path: &Path,
+    daemon: &str,
+    node_name: &str,
+) -> anyhow::Result<ShouldRun> {
+    if !placement_path.exists() {
+        return Ok(ShouldRun::MissingPlacement);
+    }
+    let placement = Placement::load_from(placement_path)?;
+    Ok(if placement.should_run(daemon, node_name) {
+        ShouldRun::Yes
+    } else {
+        ShouldRun::No
+    })
+}
+
+/// One row of `wm-node assignments`: a job, the node it's assigned to, whether that's
+/// this node, and whether the assigned node is flagged expected-down in fleet.toml.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Assignment {
+    pub job: String,
+    pub node: String,
+    pub local: bool,
+    pub may_be_off: bool,
+    pub unknown_node: bool,
+}
+
+/// Fleet metadata: which nodes exist and which are flagged expected-down (e.g. ryzen7,
+/// which may be powered off for days without that being drift). Loaded from
+/// `~/.config/wintermute/fleet.toml`:
+/// ```toml
+/// [nodes.ryzen7]
+/// expected_down = true
+/// ```
+/// Absent file means "no fleet metadata known" — assignments/doctor render without
+/// may-be-off or unknown-node annotations rather than failing.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Fleet {
+    #[serde(default)]
+    pub nodes: HashMap<String, FleetNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FleetNode {
+    #[serde(default)]
+    pub expected_down: bool,
+}
+
+impl Fleet {
+    /// Load from the standard fleet config path. Never errors on a missing file.
+    pub fn load() -> anyhow::Result<Self> {
+        Self::load_from(&fleet_config_path())
+    }
+
+    /// Load from an explicit path. A missing file yields an empty (unknown) fleet.
+    pub fn load_from(path: &Path) -> anyhow::Result<Self> {
+        if path.exists() {
+            let text = std::fs::read_to_string(path)?;
+            let f: Self = toml::from_str(&text)?;
+            Ok(f)
+        } else {
+            Ok(Self::default())
+        }
+    }
+
+    /// True if fleet.toml carried no node metadata at all (file absent or empty table) —
+    /// used to suppress unknown-node flagging when we simply have no fleet data to check
+    /// against, rather than flagging every node as unknown.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// True if `node_name` is a known member of the fleet.
+    pub fn knows(&self, node_name: &str) -> bool {
+        self.nodes.keys().any(|n| n.eq_ignore_ascii_case(node_name))
+    }
+
+    /// True if `node_name` is flagged expected-down (may be legitimately powered off).
+    pub fn expected_down(&self, node_name: &str) -> bool {
+        self.nodes
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(node_name))
+            .map(|(_, meta)| meta.expected_down)
+            .unwrap_or(false)
+    }
+}
+
+/// One drift finding: a job whose locally-enabled unit does not match its placement
+/// assignment (assigned elsewhere, or the placement entry was deleted entirely).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MisplacedEntry {
+    pub job: String,
+    /// `None` when the placement entry for this job was deleted outright (unit still
+    /// enabled locally with nothing in placement.toml naming it anywhere).
+    pub assigned_to: Option<String>,
+}
+
+/// A placement entry naming a node that fleet.toml doesn't know about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnknownNodeEntry {
+    pub job: String,
+    pub node: String,
+}
+
+/// `wm-node doctor`'s full findings for the node it ran on.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct DoctorReport {
+    pub node: String,
+    /// Jobs assigned here with an enabled unit here — no action needed.
+    pub healthy: Vec<String>,
+    /// Case (a): a unit is enabled here for a job assigned to a different node (or to no
+    /// node at all, if the placement entry was deleted).
+    pub misplaced_enabled: Vec<MisplacedEntry>,
+    /// Case (b): a job assigned here has no enabled unit here.
+    pub assigned_but_disabled: Vec<String>,
+    /// Placement entries naming a node fleet.toml doesn't recognize.
+    pub unknown_node: Vec<UnknownNodeEntry>,
+    /// True when placement.toml itself was missing (reported loudly per P1; forces a
+    /// non-zero exit even though there is nothing else to report).
+    pub placement_missing: bool,
+}
+
+impl DoctorReport {
+    /// Exit 1 when there's drift (case a or b) or placement.toml itself was missing;
+    /// exit 0 when everything assigned here is enabled here and nothing stray is enabled.
+    /// (Duplicate-key parse errors are handled before a report is ever built — see
+    /// `should_run_status`'s sibling call site in main.rs, which exits 2 instead.)
+    pub fn exit_code(&self) -> i32 {
+        if self.placement_missing
+            || !self.misplaced_enabled.is_empty()
+            || !self.assigned_but_disabled.is_empty()
+        {
+            1
+        } else {
+            0
+        }
+    }
+}
+
+/// Build a `DoctorReport` from already-loaded placement/fleet tables and the set of job
+/// names this node currently has an enabled systemd unit for. `enabled_jobs_here` is the
+/// probe's *output*, not the probe itself — this keeps the classification logic testable
+/// without shelling out to systemctl (the fixture pattern used elsewhere in this crate).
+pub fn doctor_report(
+    placement: &Placement,
+    fleet: &Fleet,
+    node_name: &str,
+    enabled_jobs_here: &[String],
+) -> DoctorReport {
+    let mut report = DoctorReport {
+        node: node_name.to_string(),
+        ..Default::default()
+    };
+
+    // Case (a) + healthy: walk every locally-enabled job.
+    for job in enabled_jobs_here {
+        match placement.placement_of(job) {
+            Some(assigned) if assigned.eq_ignore_ascii_case(node_name) => {
+                report.healthy.push(job.clone());
+            }
+            Some(assigned) => {
+                report.misplaced_enabled.push(MisplacedEntry {
+                    job: job.clone(),
+                    assigned_to: Some(assigned.to_string()),
+                });
+            }
+            None => {
+                report.misplaced_enabled.push(MisplacedEntry {
+                    job: job.clone(),
+                    assigned_to: None,
+                });
+            }
+        }
+    }
+
+    // Case (b): jobs assigned here with no enabled unit here.
+    for (job, node) in placement.table.iter() {
+        if node.eq_ignore_ascii_case(node_name)
+            && !enabled_jobs_here.iter().any(|j| j == job)
+        {
+            report.assigned_but_disabled.push(job.clone());
+        }
+    }
+
+    // unknown-node: any placement entry naming a node fleet.toml doesn't recognize
+    // (skipped entirely when fleet.toml carries no data — nothing to check against).
+    if !fleet.is_empty() {
+        for (job, node) in placement.table.iter() {
+            if !fleet.knows(node) {
+                report.unknown_node.push(UnknownNodeEntry {
+                    job: job.clone(),
+                    node: node.clone(),
+                });
+            }
+        }
+    }
+
+    report.healthy.sort();
+    report
+        .misplaced_enabled
+        .sort_by(|a, b| a.job.cmp(&b.job));
+    report.assigned_but_disabled.sort();
+    report.unknown_node.sort_by(|a, b| a.job.cmp(&b.job));
+    report
+}
+
+impl DoctorReport {
+    /// The exact `systemctl --user` commands that would converge this node — P2's
+    /// `doctor --fix`. Printed, never executed.
+    pub fn fix_commands(&self) -> Vec<String> {
+        let mut cmds = Vec::new();
+        for m in &self.misplaced_enabled {
+            let reason = match &m.assigned_to {
+                Some(n) => format!("assigned to {n}"),
+                None => "no longer assigned anywhere".to_string(),
+            };
+            cmds.push(format!(
+                "systemctl --user disable --now {}.timer  # {reason}",
+                m.job
+            ));
+        }
+        for job in &self.assigned_but_disabled {
+            cmds.push(format!(
+                "systemctl --user enable --now {job}.timer  # assigned here per placement.toml"
+            ));
+        }
+        cmds
+    }
+}
+
+/// Map a systemd unit file name (as printed by `systemctl --user list-unit-files`) to the
+/// job name it should be gated on in placement.toml. Strips the `.service`/`.timer`
+/// suffix and a leading `claude-` prefix (the vibeloop units are `claude-vibeloop-tick.timer`
+/// for job `vibeloop-tick`); `fleet-*` and `wm-*` units are already named after their job
+/// (`fleet-janitor.timer` for job `fleet-janitor`) so no prefix is stripped for those.
+pub fn unit_to_job(unit_name: &str) -> String {
+    let base = unit_name
+        .strip_suffix(".service")
+        .or_else(|| unit_name.strip_suffix(".timer"))
+        .unwrap_or(unit_name);
+    base.strip_prefix("claude-").unwrap_or(base).to_string()
 }
 
 #[cfg(test)]
@@ -244,5 +524,64 @@ wm-brain = "carbon"
             assert!(!val.contains('\''), "value should not need quoting: {:?}", line);
             assert!(!val.contains(' '), "value should not contain spaces: {:?}", line);
         }
+    }
+
+    // Edge case (PRD-wm-node-loop-placement): a placement entry naming a node fleet.toml
+    // doesn't know about is flagged unknown-node, but only once fleet.toml has any data
+    // at all — an absent/empty fleet.toml must not flag every node as unknown.
+    #[test]
+    fn doctor_flags_unknown_node_when_fleet_toml_has_data() {
+        let placement_file = write_temp("stray-job = \"nonexistent-node\"\n");
+        let placement = Placement::load_from(placement_file.path()).unwrap();
+        let fleet_file = write_temp("[nodes.redbaron]\nexpected_down = false\n");
+        let fleet = Fleet::load_from(fleet_file.path()).unwrap();
+
+        let report = doctor_report(&placement, &fleet, "redbaron", &[]);
+        assert_eq!(report.unknown_node.len(), 1);
+        assert_eq!(report.unknown_node[0].job, "stray-job");
+        assert_eq!(report.unknown_node[0].node, "nonexistent-node");
+    }
+
+    #[test]
+    fn doctor_skips_unknown_node_check_when_fleet_toml_absent() {
+        let placement_file = write_temp("stray-job = \"nonexistent-node\"\n");
+        let placement = Placement::load_from(placement_file.path()).unwrap();
+        let fleet = Fleet::load_from(Path::new("/nonexistent/fleet.toml")).unwrap();
+
+        let report = doctor_report(&placement, &fleet, "redbaron", &[]);
+        assert!(report.unknown_node.is_empty());
+    }
+
+    #[test]
+    fn unit_to_job_strips_claude_prefix_and_suffix() {
+        assert_eq!(unit_to_job("claude-vibeloop-tick.timer"), "vibeloop-tick");
+        assert_eq!(unit_to_job("claude-vibeloop-tick.service"), "vibeloop-tick");
+        assert_eq!(unit_to_job("fleet-janitor.timer"), "fleet-janitor");
+        assert_eq!(unit_to_job("wm-brain.service"), "wm-brain");
+    }
+
+    #[test]
+    fn should_run_status_is_permissive_on_missing_placement() {
+        let status =
+            should_run_status(Path::new("/nonexistent/placement.toml"), "anything", "redbaron")
+                .unwrap();
+        assert_eq!(status, ShouldRun::MissingPlacement);
+    }
+
+    #[test]
+    fn fix_commands_cover_both_drift_directions() {
+        let mut report = DoctorReport {
+            node: "redbaron".to_string(),
+            ..Default::default()
+        };
+        report.misplaced_enabled.push(MisplacedEntry {
+            job: "vibeloop-tick".to_string(),
+            assigned_to: Some("carbon".to_string()),
+        });
+        report.assigned_but_disabled.push("vibeloop-measure".to_string());
+
+        let cmds = report.fix_commands();
+        assert!(cmds.iter().any(|c| c.contains("disable") && c.contains("vibeloop-tick")));
+        assert!(cmds.iter().any(|c| c.contains("enable") && c.contains("vibeloop-measure")));
     }
 }
