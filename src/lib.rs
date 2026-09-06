@@ -519,7 +519,7 @@ wm-brain = "carbon"
             if line.is_empty() {
                 continue;
             }
-            let val = line.splitn(2, '=').nth(1).unwrap_or("");
+            let val = line.split_once('=').map(|x| x.1).unwrap_or("");
             assert!(!val.contains('"'), "value should not need quoting: {:?}", line);
             assert!(!val.contains('\''), "value should not need quoting: {:?}", line);
             assert!(!val.contains(' '), "value should not contain spaces: {:?}", line);

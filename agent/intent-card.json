@@ -43,9 +43,9 @@
     },
     {
       "id": "AC6",
-      "level": "MUST",
-      "description": "Given the vibeloop timer units in the dotfiles repo, When the build lands, Then each carries an ExecCondition wm-node should-run line and no local-only placement edit remains on RedBaron.",
-      "test": "tests/acceptance_ac6.rs"
+      "level": "SHOULD",
+      "description": "Given the vibeloop timer units in the dotfiles repo, When the build lands, Then each carries an ExecCondition wm-node should-run line and no local-only placement edit remains on RedBaron. Deferred per PRD-wm-node-loop-placement.md's deferred_acs line and agent/intent_card_amendment_request.json: this requires editing the dotfiles repo's unit sources, a different repo this crate does not own; wm-node's own mechanism (should-run, assignments, doctor) is done and ready for that follow-on edit to consume.",
+      "test": "tests/placement_ac6_deferred.rs"
     },
     {
       "id": "AC7",
