@@ -23,9 +23,9 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.10.1
 
       - name: install cargo-deny
-        uses: taiki-e/install-action@84c20235bedc3797f1cf1146ac240e2c3df9b7df # v2.49.27
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
 
       - name: cargo check
         run: cargo check --workspace

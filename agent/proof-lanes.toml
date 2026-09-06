@@ -44,7 +44,7 @@ required_commands = [
 [[lane]]
 id = "ci-infra"
 description = "CI/build-harness config onboarded in this commit (GitHub Actions workflow, cargo-deny policy, pinned toolchain, scripts/audit.sh) — this repo had none before PRD-wm-node-loop-placement's gate onboarding step added them alongside wm-router/ac-judge's existing shape. Once onboarded, a later PRD that edits these paths should tighten this lane to wm-router's harness-readonly convention (required_commands = [\"exit 1\"]) rather than silently keep it editable."
-globs = ["scripts/audit.sh", "deny.toml", "rust-toolchain.toml", ".github/workflows/**"]
+globs = ["scripts/audit.sh", "rules/audit-checks.sh", "deny.toml", "rust-toolchain.toml", ".github/workflows/**"]
 required_commands = [
   "scripts/audit.sh",
 ]
