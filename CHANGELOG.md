@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.1 — 2026-09-06
+
+Repo gate onboarding for wm-node (blocked at HEAD de1b28e: 9/25 receipts,
+missing autobuilder scaffolding). This release adds the remaining
+gate-required build harness — `rust-toolchain.toml` (pinned 1.85.0),
+`deny.toml` (cargo-deny supply-chain policy), `scripts/audit.sh` (BAD_RUST
+risk-gate producer), and `.github/workflows/ci.yml` (check/clippy/test/deny/
+audit on push and PR) — matching the shape already proven in wm-router/
+ac-judge/skill-manifest. `agent/proof-lanes.toml` gains a `ci-infra` lane so
+these newly-onboarded paths route correctly under vti-plan, and the `deps`
+lane now runs `cargo deny check`. Fixes one real audit finding surfaced by
+turning scripts/audit.sh on for the first time: the SIGPIPE-handling
+`unsafe` block in `main.rs` gets a `SAFETY:` comment (behavior unchanged).
+`agent/intent-card.json` is refreshed from PRD-wm-node-loop-placement so it
+describes this crate's real, already-shipped assignments/doctor feature
+(v0.2.0) instead of the placeholder card `onboard-repo.sh` generated before
+any PRD was known to be the author.
+
 ## v0.2.0
 
 wm-node v0.1.0 shipped the placement mechanism (`placement.toml` +

@@ -30,6 +30,7 @@ description = "Cargo.toml / Cargo.lock changes"
 globs = ["Cargo.toml", "Cargo.lock"]
 required_commands = [
   "cargo check --workspace",
+  "cargo deny check",
 ]
 
 [[lane]]
@@ -38,4 +39,12 @@ description = "Orchestrator-owned scaffold metadata (agent/** and repo hygiene).
 globs = ["agent/**", ".gitignore", "CHANGELOG.md", "README.md", "LICENSE-*", "extended-gates.toml", "PRD-*.md"]
 required_commands = [
   "autobuilder intake --validate agent/intent-card.json",
+]
+
+[[lane]]
+id = "ci-infra"
+description = "CI/build-harness config onboarded in this commit (GitHub Actions workflow, cargo-deny policy, pinned toolchain, scripts/audit.sh) — this repo had none before PRD-wm-node-loop-placement's gate onboarding step added them alongside wm-router/ac-judge's existing shape. Once onboarded, a later PRD that edits these paths should tighten this lane to wm-router's harness-readonly convention (required_commands = [\"exit 1\"]) rather than silently keep it editable."
+globs = ["scripts/audit.sh", "deny.toml", "rust-toolchain.toml", ".github/workflows/**"]
+required_commands = [
+  "scripts/audit.sh",
 ]

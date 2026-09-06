@@ -5,6 +5,7 @@ use wm_node::{DoctorReport, Fleet, Node, Placement, ShouldRun};
 fn main() {
     // SIGPIPE safety: prevent panic on broken pipe (e.g. `wm-node id | head`)
     #[cfg(unix)]
+    // SAFETY: `libc::signal` is FFI but sound here — SIGPIPE/SIG_DFL are valid `c_int` constants (no pointer/lifetime involved), and this runs once at process start before any other thread exists, so there is no concurrent-signal-table race.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
