@@ -4,10 +4,6 @@
   "head_sha": "8184768c287b2ccdda5570f9bfc1262c0d77c475",
   "receipts": [
     {
-      "name": "intake",
-      "reason": "missing: /home/jsy/wintermute/wm-node/target/autobuilder/receipts/intake.json"
-    },
-    {
       "name": "reviewer-agent",
       "reason": "reviewer decision=block not in [\"pass\", \"concern\"]"
     },
