@@ -86,14 +86,5 @@
       "a": "No. This card was mechanically generated from repo introspection by scripts/onboard-repo.sh because no PRD names this crate as built/archived yet. No five-whys interview ran."
     }
   ],
-  "created_at": "2026-09-06T03:21:35Z",
-  "carried_forward": {
-    "user_persona": true,
-    "unfakeable_metric": true,
-    "scope": true,
-    "non_goals": true,
-    "hard_constraints": true,
-    "five_whys_trace": true,
-    "created_at": true
-  }
+  "created_at": "2026-09-06T03:21:35Z"
 }
