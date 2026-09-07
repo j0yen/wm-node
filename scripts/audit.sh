@@ -3,7 +3,7 @@
 # audit.sh — runs the BAD_RUST audit against this project.
 # READ-ONLY: the edit-agent must not modify this file.
 #
-# Uses ~/.claude/skills/autobuilder/rules/audit-checks.sh when present (a
+# Uses ~/.claude/skills/rustbuild/rules/audit-checks.sh when present (a
 # build box), else the vendored copy at rules/audit-checks.sh (CI has no
 # ~/.claude — mirrors mcphost's scripts/audit.sh convention).
 # Output: target/autobuilder/receipts/risk-gate.json (the gate's expected
@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-AUDIT="$HOME/.claude/skills/autobuilder/rules/audit-checks.sh"
+AUDIT="$HOME/.claude/skills/rustbuild/rules/audit-checks.sh"
 [ -x "$AUDIT" ] || AUDIT="rules/audit-checks.sh"
 mkdir -p target/autobuilder/receipts
 
